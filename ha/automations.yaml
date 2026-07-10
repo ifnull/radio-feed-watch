@@ -1,0 +1,18 @@
+# Example automation: notify when a waypoint alert fires
+automation:
+  - id: radio_feed_watch_waypoint_alert
+    alias: "Radio Feed Watch waypoint alert"
+    mode: queued
+    trigger:
+      - platform: mqtt
+        topic: "radio/+/alert"
+    action:
+      - service: notify.notify
+        data:
+          title: "Nearby {{ trigger.payload_json.incident_type }}"
+          message: >
+            {{ trigger.payload_json.source_label }}:
+            {{ trigger.payload_json.address or 'unknown address' }}
+            ({{ trigger.payload_json.distance_m | round(0) }}m from
+            {{ trigger.payload_json.waypoint_id }})
+            — {{ trigger.payload_json.text }}

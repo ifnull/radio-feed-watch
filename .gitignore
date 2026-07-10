@@ -1,0 +1,37 @@
+# Secrets / local config
+.env
+.env.*
+!.env.example
+config.yaml
+config/locales/*.yaml
+!config/locales/*.example.yaml
+
+# Runtime data
+data/clips/**
+!data/clips/.gitkeep
+data/db/**
+!data/db/.gitkeep
+*.db
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Models / caches
+.cache/
+models/
+*.bin
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

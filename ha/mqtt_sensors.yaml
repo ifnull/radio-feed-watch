@@ -1,0 +1,28 @@
+# Example Home Assistant MQTT sensors for radio-feed-watch
+# Requires Mosquitto + MQTT integration. Adjust topic_prefix if needed.
+
+mqtt:
+  sensor:
+    - name: "Radio Feed Watch Last Transcript"
+      state_topic: "radio/+/transcript"
+      value_template: "{{ value_json.text }}"
+      json_attributes_topic: "radio/+/transcript"
+      json_attributes:
+        - source_id
+        - source_label
+        - clip_id
+        - stt_provider
+        - ts
+
+    - name: "Radio Feed Watch Last Incident Type"
+      state_topic: "radio/+/incident"
+      value_template: "{{ value_json.incident_type }}"
+      json_attributes_topic: "radio/+/incident"
+      json_attributes:
+        - source_id
+        - address
+        - lat
+        - lon
+        - type_confidence
+        - text
+        - clip_id

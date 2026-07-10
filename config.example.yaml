@@ -1,0 +1,55 @@
+# Copy to config.yaml and adjust. Locale packs supply city-specific feeds/bbox/vocab.
+
+locale: config/locales/austin.example.yaml
+
+stt:
+  provider: local # local | deepgram
+  local:
+    model: base.en
+    compute_type: int8
+    device: cpu
+    beam_size: 1
+  deepgram:
+    model: nova-2
+    # api_key from DEEPGRAM_API_KEY env
+
+clips:
+  enabled: true
+  dir: ./data/clips
+  format: opus # opus | wav
+  retention_days: 7
+  max_total_gb: 10
+
+# Live-stream energy VAD (Broadcastify MP3 → clips). Longer silence keeps
+# unit ID + follow-up in one clip when PTT leaves a short gap.
+vad:
+  speech_rms: 500
+  silence_ms_to_end: 2000
+  min_speech_ms: 600
+  max_speech_ms: 45000
+
+mqtt:
+  enabled: false
+  host: ${MQTT_HOST:127.0.0.1}
+  port: ${MQTT_PORT:1883}
+  username: ${MQTT_USERNAME:}
+  password: ${MQTT_PASSWORD:}
+  topic_prefix: ${MQTT_TOPIC_PREFIX:radio}
+
+dashboard:
+  mode: ops # ops | demo
+  host: 0.0.0.0
+  port: 8080
+  brand_name: radio-feed-watch
+  # Group same-source transcript rows within this gap into one burst block
+  transcript_burst_gap_s: 3.0
+
+waypoints:
+  # Leave empty (`waypoints: []`) or list entries like:
+  # - id: home
+  #   label: Home
+  #   lat: 30.2672
+  #   lon: -97.7431
+  #   radius_m: 800          # meters
+  #   incident_types: []     # empty = all types
+  []

@@ -1,0 +1,81 @@
+# First locale pack for radio-feed-watch.
+# Copy to austin.yaml (gitignored) or point config.locale here for dogfooding.
+# Core code must not hard-code Austin — all place-specific data lives in packs like this.
+#
+# Default ingest is Broadcastify *listen streams* (Basic auth with your account).
+# feed_id comes from the listen URL: https://audio.broadcastify.com/{feed_id}.mp3
+# Find feeds at https://www.broadcastify.com/listen/ — open a feed and check Network tab.
+
+id: austin
+label: Austin / Travis County
+timezone: America/Chicago
+
+# Geocode bias (south, west, north, east) — Travis County-ish bbox
+bbox:
+  south: 30.05
+  west: -98.05
+  north: 30.55
+  east: -97.45
+
+geocode:
+  country_codes: us
+  viewbox: "-98.05,30.55,-97.45,30.05"
+  default_city: Austin
+  default_state: TX
+  default_county: Travis County
+  # Helps unincorporated / Lakeway-area addresses that OSM won't bind to "Austin"
+  postal_codes:
+    - "78734"
+
+sources:
+  # Replace feed_id with the numeric id from audio.broadcastify.com/{id}.mp3
+  - id: austin_example
+    type: broadcastify
+    mode: stream
+    enabled: true
+    label: "Austin example feed"
+    feed_id: "14439"
+  # Optional advanced: Calls API (requires developer API approval + keys)
+  # - id: afd_calls_a1
+  #   type: broadcastify
+  #   mode: calls
+  #   enabled: false
+  #   label: "AFD Fire Dispatch A1 (Calls API)"
+  #   group_id: "2-3416"
+  - id: local_sdr
+    type: rtlsdr
+    enabled: false
+    label: "Local RTL-SDR (stub)"
+    # device_index: 0
+    # frequencies: []
+
+# Phrase overlays for incident_type classification (merged with built-in defaults)
+phrases:
+  structure_fire:
+    - structure fire
+    - working fire
+    - box alarm
+  vehicle_accident:
+    - mvc
+    - motor vehicle
+    - vehicle accident
+    - traffic accident
+  medical:
+    - chest pain
+    - cardiac arrest
+    - stroke
+    - unresponsive
+  hazmat:
+    - hazmat
+    - gas leak
+  rescue:
+    - rescue
+    - water rescue
+
+dashboard:
+  map_center:
+    lat: 30.2672
+    lon: -97.7431
+    zoom: 11
+  demo_title: Austin live radio incidents
+  demo_blurb: Public demo of radio-feed-watch on Austin Broadcastify feeds.
