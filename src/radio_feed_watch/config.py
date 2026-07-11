@@ -42,6 +42,8 @@ class EnvSettings(BaseSettings):
     broadcastify_username: str = ""
     broadcastify_password: str = ""
     deepgram_api_key: str = ""
+    # OpenAI-compatible key for optional llm_correct (OpenAI, Groq, local proxy, …)
+    openai_api_key: str = ""
     mqtt_host: str = "127.0.0.1"
     mqtt_port: int = 1883
     mqtt_username: str = ""
@@ -50,14 +52,50 @@ class EnvSettings(BaseSettings):
 
 
 class LocalSttConfig(BaseModel):
-    model: str = "base.en"
+    # small.en is a better radio default than base.en; use medium.en if CPU allows.
+    model: str = "small.en"
     compute_type: str = "int8"
     device: str = "cpu"
-    beam_size: int = 1
+    beam_size: int = 5
+    # Bias Whisper toward radio phrasing (also merged with locale stt_vocab).
+    initial_prompt: str = (
+        "Police and fire radio dispatch. Ten-four, ten-twenty, standby, copy, "
+        "en route, code three, structure fire, MVC, welfare check, unit numbers, "
+        "street addresses."
+    )
+    vad_filter: bool = True
+    # Higher = more aggressive silence rejection (cuts "thanks for watching" junk).
+    no_speech_threshold: float = 0.6
+    condition_on_previous_text: bool = False
+    temperature: float = 0.0
 
 
 class DeepgramSttConfig(BaseModel):
-    model: str = "nova-2"
+    # phonecall is tuned for narrowband / compressed audio (closer to scanner feeds).
+    # For Nova-3 use model: nova-3 and keyterms (not keywords).
+    model: str = "nova-2-phonecall"
+    language: str = "en-US"
+    smart_format: bool = True
+    punctuate: bool = True
+    numerals: bool = True
+    # Intensifier for nova-2 keywords (ignored for nova-3 keyterm mode).
+    keyword_intensifier: float = 1.5
+    # Extra global boost terms (locale stt_vocab is merged in at runtime).
+    keywords: list[str] = Field(
+        default_factory=lambda: [
+            "ten-four",
+            "ten-twenty",
+            "ten-ninety-seven",
+            "standby",
+            "en route",
+            "code three",
+            "code four",
+            "structure fire",
+            "welfare check",
+            "MVC",
+            "copy",
+        ]
+    )
 
 
 class SttConfig(BaseModel):
@@ -72,6 +110,55 @@ class ClipsConfig(BaseModel):
     format: Literal["opus", "wav"] = "opus"
     retention_days: int = 7
     max_total_gb: float = 10.0
+    # How often the background retention job runs (startup always purges once).
+    purge_interval_s: int = 3600
+
+
+class FilterConfig(BaseModel):
+    """Drop noisy / duplicate transcripts before MQTT + dashboard publish."""
+
+    # Skip STT for clips shorter than this (saves cloud STT cost).
+    min_clip_duration_s: float = 0.4
+    # Drop after STT if text is shorter than this (after strip).
+    min_text_chars: int = 3
+    # Drop if STT confidence is present and below this (null = disabled).
+    min_confidence: float | None = 0.25
+    # Near-duplicate window per source (seconds).
+    dedupe_window_s: float = 45.0
+    # 1.0 = exact match after normalize; lower allows near-duplicates.
+    dedupe_similarity: float = 0.92
+    # Common STT hallucinations on silence / noise.
+    drop_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "thank you",
+            "thanks for watching",
+            "thanks for listening",
+            "subscribe",
+            "music",
+            ".",
+            "...",
+        ]
+    )
+    # Short PTT bursts: stock ASR often hears "ten-four" as never/shower/tower/…
+    short_ack_remap: bool = True
+    short_ack_max_duration_s: float = 3.0
+    short_ack_max_words: int = 2
+    # Normalized junk → replacement (then radio-code decode turns "ten four" → 10-4).
+    short_ack_map: dict[str, str] = Field(
+        default_factory=lambda: {
+            "never": "ten four",
+            "shower": "ten four",
+            "tower": "ten four",
+            "cover": "ten four",
+            "sour": "ten four",
+            "summer": "ten four",
+            "nether": "ten four",
+            "ever": "ten four",
+            "trevor": "ten four",
+            "ender": "ten four",
+            "enter": "ten four",
+        }
+    )
 
 
 class VadConfig(BaseModel):
@@ -82,6 +169,31 @@ class VadConfig(BaseModel):
     silence_ms_to_end: int = 2000
     min_speech_ms: int = 600
     max_speech_ms: int = 45_000
+
+
+class LlmCorrectConfig(BaseModel):
+    """Optional LLM reinterpretation of bad STT (OpenAI-compatible API).
+
+    Off by default. When enabled, only short / low-confidence / few-word clips
+    are sent. Requires OPENAI_API_KEY (or any OpenAI-compatible key).
+    """
+
+    enabled: bool = False
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4.1-mini"
+    timeout_s: float = 8.0
+    max_tokens: int = 200
+    temperature: float = 0.0
+    # Gate: call when ANY of these match
+    max_duration_s: float = 4.0
+    max_confidence: float | None = 0.5
+    max_words: int = 3
+    # Skip LLM if short-ack heuristic already remapped (saves cost)
+    skip_if_short_ack: bool = True
+    # Only apply correction when model confidence >= this
+    min_correct_confidence: float = 0.6
+    # Recent same-source transcripts included as context
+    context_size: int = 5
 
 
 class MqttConfig(BaseModel):
@@ -126,6 +238,8 @@ class GeocodeLocaleConfig(BaseModel):
     default_county: str | None = None
     # Optional postal codes to bias rural / unincorporated addresses (e.g. 78734)
     postal_codes: list[str] = Field(default_factory=list)
+    # ZIP → city label when OSM has no city (e.g. 78617 → Del Valle)
+    postal_cities: dict[str, str] = Field(default_factory=dict)
 
 
 class SourceConfig(BaseModel):
@@ -157,6 +271,8 @@ class LocaleConfig(BaseModel):
     geocode: GeocodeLocaleConfig = Field(default_factory=GeocodeLocaleConfig)
     sources: list[SourceConfig] = Field(default_factory=list)
     phrases: dict[str, list[str]] = Field(default_factory=dict)
+    # Domain vocab for STT boosting (street names, agencies, local slang).
+    stt_vocab: list[str] = Field(default_factory=list)
     dashboard: LocaleDashboardConfig = Field(default_factory=LocaleDashboardConfig)
 
 
@@ -165,7 +281,9 @@ class AppConfig(BaseModel):
     locale: LocaleConfig
     stt: SttConfig = Field(default_factory=SttConfig)
     clips: ClipsConfig = Field(default_factory=ClipsConfig)
+    filters: FilterConfig = Field(default_factory=FilterConfig)
     vad: VadConfig = Field(default_factory=VadConfig)
+    llm_correct: LlmCorrectConfig = Field(default_factory=LlmCorrectConfig)
     mqtt: MqttConfig = Field(default_factory=MqttConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     waypoints: list[WaypointConfig] = Field(default_factory=list)
@@ -215,7 +333,9 @@ def load_config(config_path: str | Path = "config.yaml") -> AppConfig:
         locale=LocaleConfig.model_validate(locale_raw),
         stt=SttConfig.model_validate(raw.get("stt") or {}),
         clips=ClipsConfig.model_validate(raw.get("clips") or {}),
+        filters=FilterConfig.model_validate(raw.get("filters") or {}),
         vad=VadConfig.model_validate(raw.get("vad") or {}),
+        llm_correct=LlmCorrectConfig.model_validate(raw.get("llm_correct") or {}),
         mqtt=mqtt,
         dashboard=DashboardConfig.model_validate(raw.get("dashboard") or {}),
         waypoints=[WaypointConfig.model_validate(w) for w in (raw.get("waypoints") or [])],

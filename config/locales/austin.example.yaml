@@ -25,7 +25,11 @@ geocode:
   default_county: Travis County
   # Helps unincorporated / Lakeway-area addresses that OSM won't bind to "Austin"
   postal_codes:
+    - "78617"
     - "78734"
+  postal_cities:
+    "78617": Del Valle
+    "78734": Lakeway
 
 sources:
   # Replace feed_id with the numeric id from audio.broadcastify.com/{id}.mp3
@@ -71,6 +75,30 @@ phrases:
   rescue:
     - rescue
     - water rescue
+
+# Boosted in Deepgram keywords / Whisper initial_prompt (keep short)
+stt_vocab:
+  - Austin
+  - Travis County
+  - APD
+  - AFD
+  - EMS
+  - MoPac
+  - I-35
+  - IH-35
+  - SH
+  - FM
+  - RM
+  - PR
+  - Congress
+  - Lamar
+  - Lakeway
+  - Bee Cave
+  - Del Valle
+  - welfare check
+  - ten-four
+  - ten-twenty
+  - code three
 
 dashboard:
   map_center:

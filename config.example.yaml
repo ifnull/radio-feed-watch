@@ -5,12 +5,17 @@ locale: config/locales/austin.example.yaml
 stt:
   provider: local # local | deepgram
   local:
-    model: base.en
+    model: small.en # base.en faster; medium.en more accurate / slower
     compute_type: int8
     device: cpu
-    beam_size: 1
+    beam_size: 5
+    no_speech_threshold: 0.6
+    condition_on_previous_text: false
   deepgram:
-    model: nova-2
+    # nova-2-phonecall ≈ scanner/narrowband; or nova-3 + keyterms
+    model: nova-2-phonecall
+    numerals: true
+    keyword_intensifier: 1.5
     # api_key from DEEPGRAM_API_KEY env
 
 clips:
@@ -19,6 +24,31 @@ clips:
   format: opus # opus | wav
   retention_days: 7
   max_total_gb: 10
+  purge_interval_s: 3600
+
+# Drop empty / short / low-confidence / near-duplicate transcripts before publish
+filters:
+  min_clip_duration_s: 0.4
+  min_text_chars: 3
+  min_confidence: 0.25   # null to disable
+  dedupe_window_s: 45
+  dedupe_similarity: 0.92
+  # Short PTT: "Never." / "Shower." often = ten-four on radio
+  short_ack_remap: true
+  short_ack_max_duration_s: 3.0
+
+# Optional LLM reinterpretation of bad STT (OpenAI-compatible). Off by default.
+# Requires OPENAI_API_KEY. Only short / low-conf / few-word clips are sent.
+llm_correct:
+  enabled: false
+  base_url: https://api.openai.com/v1
+  model: gpt-4.1-mini
+  max_duration_s: 4.0
+  max_confidence: 0.5
+  max_words: 3
+  skip_if_short_ack: true
+  min_correct_confidence: 0.6
+  context_size: 5
 
 # Live-stream energy VAD (Broadcastify MP3 → clips). Longer silence keeps
 # unit ID + follow-up in one clip when PTT leaves a short gap.

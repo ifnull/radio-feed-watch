@@ -1,0 +1,4 @@
+# Ignore local secrets / runtime mounts (compose still uses them from host)
+.env
+config.yaml
+data/

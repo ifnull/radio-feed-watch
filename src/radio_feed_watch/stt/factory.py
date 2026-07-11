@@ -9,6 +9,7 @@ from radio_feed_watch.stt.local_whisper import LocalWhisperTranscriber
 
 
 def build_transcriber(app: AppConfig) -> Transcriber:
+    vocab = list(app.locale.stt_vocab or [])
     if app.stt.provider == "deepgram":
-        return DeepgramTranscriber(app.stt.deepgram, app.env.deepgram_api_key)
-    return LocalWhisperTranscriber(app.stt.local)
+        return DeepgramTranscriber(app.stt.deepgram, app.env.deepgram_api_key, locale_vocab=vocab)
+    return LocalWhisperTranscriber(app.stt.local, locale_vocab=vocab)

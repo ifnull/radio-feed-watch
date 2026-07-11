@@ -72,19 +72,58 @@ def test_geocode_variants_prefer_county_then_city():
     assert "19125 James Carter Jr Street" in variants
 
 
-def test_format_us_address_uses_default_city():
+def test_extract_highway_sh_spaced():
+    from radio_feed_watch.extract.address import normalize_road_designations
+
+    # TxDOT compact codes + letter-spaced STT
+    assert "State Highway 71" in normalize_road_designations("S H 71")
+    assert "State Highway 71" in normalize_road_designations("SH 71")
+    assert "FM 969" in normalize_road_designations("F M 969")
+    assert "Interstate 35" in normalize_road_designations("I H 35")
+    assert "Interstate 35" in normalize_road_designations("IH-35")
+    assert "US Highway 290" in normalize_road_designations("U S 290")
+    assert "RM 620" in normalize_road_designations("R M 620")
+    assert "Park Road 1" in normalize_road_designations("P R 1")
+    assert "Park Road 4" in normalize_road_designations("PR 4")
+
+    addrs = extract_addresses("5326 East, S H 71")
+    assert addrs
+    assert addrs[0].startswith("5326")
+    assert "71" in addrs[0]
+    assert "Highway" in addrs[0]
+
+    # Spoken TxDOT long form still extracts
+    addrs2 = extract_addresses("900 Farm to Market Road 969")
+    assert addrs2 and "FM" in addrs2[0] and "969" in addrs2[0]
+
+
+def test_extract_highway_fm():
+    addrs = extract_addresses("1200 FM 969 for a welfare check")
+    assert addrs
+    assert "1200" in addrs[0]
+    assert "FM" in addrs[0]
+    assert "969" in addrs[0]
+
+
+def test_extract_park_road():
+    addrs = extract_addresses("200 PR 1A")
+    assert addrs
+    assert addrs[0] == "200 PR 1A"
+
+
+def test_format_preserves_house_and_postal_city():
     from radio_feed_watch.geo.proximity import format_us_address
 
     display = format_us_address(
         {
-            "house_number": "123",
-            "road": "Example Trail",
+            "road": "East State Highway 71",
             "county": "Travis County",
             "state": "Texas",
-            "postcode": "78734",
+            "postcode": "78617",
         },
-        fallback="123 Example Trail",
+        fallback="5326 E Highway 71",
         default_city="Austin",
         default_state="TX",
+        postal_cities={"78617": "Del Valle"},
     )
-    assert display == "123 Example Trail, Austin, TX 78734"
+    assert display == "5326 E Highway 71, Del Valle, TX 78617"

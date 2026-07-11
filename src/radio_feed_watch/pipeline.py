@@ -1,4 +1,4 @@
-"""Pipeline: clip → store → STT → classify → geocode → proximity → MQTT/bus."""
+"""Pipeline: clip → store → STT → filter → classify → geocode → proximity → MQTT/bus."""
 
 from __future__ import annotations
 
@@ -9,8 +9,15 @@ from radio_feed_watch.bus import EventBus
 from radio_feed_watch.classify.rules import classify_incident
 from radio_feed_watch.config import AppConfig
 from radio_feed_watch.extract.address import extract_addresses
+from radio_feed_watch.extract.llm_correct import LlmCorrector
 from radio_feed_watch.extract.phonetic import decode_phonetics
 from radio_feed_watch.extract.radio_codes import decode_radio_codes
+from radio_feed_watch.filters import (
+    TranscriptDeduper,
+    evaluate_transcript,
+    remap_short_ack,
+    should_skip_clip,
+)
 from radio_feed_watch.geo.proximity import Geocoder, nearest_waypoint
 from radio_feed_watch.models import AlertEvent, IncidentEvent, TranscriptEvent
 from radio_feed_watch.mqtt.publisher import MqttPublisher
@@ -36,8 +43,29 @@ class Pipeline:
         self.mqtt = mqtt
         self.bus = bus
         self.geocoder = Geocoder(app.locale)
+        f = app.filters
+        self.deduper = TranscriptDeduper(f.dedupe_window_s, f.dedupe_similarity)
+        locale = app.locale
+        hints = ""
+        if locale.geocode.default_city or locale.geocode.default_state:
+            city = locale.geocode.default_city or ""
+            state = locale.geocode.default_state or ""
+            hints = f"Locale implies {city}, {state}. ".strip()
+        if locale.stt_vocab:
+            hints += " Local vocab: " + ", ".join(locale.stt_vocab[:40]) + "."
+        self.llm_corrector = LlmCorrector(
+            app.llm_correct,
+            api_key=app.env.openai_api_key,
+            locale_label=locale.label or locale.id,
+            locale_hints=hints.strip(),
+        )
 
     async def handle_clip(self, clip: AudioClip) -> IncidentEvent | None:
+        skip = should_skip_clip(duration_s=clip.duration_s, filters=self.app.filters)
+        if not skip.ok:
+            logger.info("[%s] skip clip: %s (%.2fs)", clip.source_id, skip.reason, clip.duration_s or 0)
+            return None
+
         record = None
         if self.app.clips.enabled:
             record = self.store.save_clip(clip)
@@ -47,7 +75,7 @@ class Pipeline:
         result = await self.transcriber.transcribe(clip, path=clip_path)
         raw_text = result.text.strip()
         if not raw_text:
-            logger.info("Empty transcript for %s", clip.source_id)
+            logger.info("[%s] empty transcript", clip.source_id)
             return None
 
         phonetic = decode_phonetics(raw_text)
@@ -58,6 +86,21 @@ class Pipeline:
                 clip.source_id,
                 ", ".join(f"{h.letters}<={' '.join(h.words)}" for h in phonetic.hits),
             )
+
+        ack = remap_short_ack(
+            text=text,
+            duration_s=clip.duration_s,
+            filters=self.app.filters,
+        )
+        if ack.changed:
+            logger.info(
+                "[%s] short-ack remap: %r → %r (%.2fs)",
+                clip.source_id,
+                ack.from_text,
+                ack.to_text,
+                clip.duration_s or 0,
+            )
+            text = ack.text
 
         radio = decode_radio_codes(text)
         text = radio.text
@@ -70,6 +113,61 @@ class Pipeline:
                     for h in radio.hits
                 ),
             )
+
+        llm = await self.llm_corrector.correct(
+            text=text,
+            source_id=clip.source_id,
+            duration_s=clip.duration_s,
+            confidence=result.confidence,
+            short_ack_changed=ack.changed,
+        )
+        if llm.changed:
+            logger.info(
+                "[%s] llm_correct: %r → %r (intent=%s conf=%s reason=%s)",
+                clip.source_id,
+                llm.from_text,
+                llm.to_text,
+                llm.intent,
+                llm.confidence,
+                llm.reason,
+            )
+            text = llm.text
+            # Re-decode codes if the model left spoken forms
+            radio2 = decode_radio_codes(text)
+            text = radio2.text
+            if radio2.changed:
+                radio = radio2
+                logger.info(
+                    "[%s] radio codes (post-llm): %s",
+                    clip.source_id,
+                    ", ".join(
+                        f"{h.normalized}<={h.raw}"
+                        + (f" [{h.meaning}]" if h.meaning else "")
+                        for h in radio2.hits
+                    ),
+                )
+        elif llm.skipped and llm.skipped not in (
+            "disabled",
+            "gate_not_met",
+            "short_ack_already",
+        ):
+            logger.debug("[%s] llm_correct skip: %s", clip.source_id, llm.skipped)
+
+        gate = evaluate_transcript(
+            text=text,
+            confidence=result.confidence,
+            filters=self.app.filters,
+            source_id=clip.source_id,
+            deduper=self.deduper,
+        )
+        if not gate.ok:
+            logger.info("[%s] drop transcript (%s): %r", clip.source_id, gate.reason, text[:80])
+            if record:
+                self.store.update_text(record.clip_id, f"[{gate.reason}] {text}")
+            return None
+
+        self.deduper.remember(clip.source_id, text)
+        self.llm_corrector.remember(clip.source_id, text)
 
         if record:
             self.store.update_text(record.clip_id, text)
@@ -86,6 +184,22 @@ class Pipeline:
             duration_s=clip.duration_s,
             raw={
                 "text_raw": raw_text,
+                "short_ack_remap": (
+                    {"from": ack.from_text, "to": ack.to_text} if ack.changed else None
+                ),
+                "llm_correct": (
+                    {
+                        "from": llm.from_text,
+                        "to": llm.to_text,
+                        "intent": llm.intent,
+                        "confidence": llm.confidence,
+                        "reason": llm.reason,
+                    }
+                    if llm.changed
+                    else {"skipped": llm.skipped}
+                    if llm.skipped
+                    else None
+                ),
                 "phonetic_hits": [
                     {"letters": h.letters, "words": h.words} for h in phonetic.hits
                 ],

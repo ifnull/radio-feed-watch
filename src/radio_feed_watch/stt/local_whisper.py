@@ -1,4 +1,4 @@
-"""Local faster-whisper STT provider."""
+"""Local faster-whisper STT provider — tuned for short radio bursts."""
 
 from __future__ import annotations
 
@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 class LocalWhisperTranscriber(Transcriber):
     name = "local"
 
-    def __init__(self, config: LocalSttConfig):
+    def __init__(self, config: LocalSttConfig, locale_vocab: list[str] | None = None):
         self.config = config
+        self.locale_vocab = [v.strip() for v in (locale_vocab or []) if v and v.strip()]
         self._model = None
 
     def _load(self):
@@ -44,6 +45,14 @@ class LocalWhisperTranscriber(Transcriber):
         )
         return self._model
 
+    def _prompt(self) -> str | None:
+        parts = [self.config.initial_prompt.strip()] if self.config.initial_prompt else []
+        if self.locale_vocab:
+            parts.append("Local terms: " + ", ".join(self.locale_vocab[:40]) + ".")
+        prompt = " ".join(p for p in parts if p).strip()
+        # Whisper prompt is most effective when kept relatively short
+        return prompt[:800] if prompt else None
+
     async def transcribe(self, clip: AudioClip, path: Path | None = None) -> TranscriptResult:
         return await asyncio.to_thread(self._transcribe_sync, clip, path)
 
@@ -62,13 +71,28 @@ class LocalWhisperTranscriber(Transcriber):
                 str(audio_path),
                 language="en",
                 beam_size=self.config.beam_size,
-                vad_filter=True,
+                vad_filter=self.config.vad_filter,
+                initial_prompt=self._prompt(),
+                condition_on_previous_text=self.config.condition_on_previous_text,
+                temperature=self.config.temperature,
+                no_speech_threshold=self.config.no_speech_threshold,
             )
             parts = [seg.text.strip() for seg in segments if seg.text and seg.text.strip()]
             text = " ".join(parts).strip()
+            # Average segment avg_logprob as a rough confidence proxy when available
+            conf = None
+            probs = [
+                float(seg.avg_logprob)
+                for seg in segments
+                if getattr(seg, "avg_logprob", None) is not None
+            ]
+            if probs:
+                # map typical logprob [-1, 0] → [0, 1] (clamped)
+                avg = sum(probs) / len(probs)
+                conf = max(0.0, min(1.0, 1.0 + avg))
             return TranscriptResult(
                 text=text,
-                confidence=None,
+                confidence=conf,
                 provider=self.name,
                 language=getattr(info, "language", "en"),
             )

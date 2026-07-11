@@ -79,16 +79,30 @@ async def run(config_path: str) -> None:
     server = uvicorn.Server(config)
     server.install_signal_handlers = False
 
+    async def _purge_loop() -> None:
+        interval = max(60, int(app.clips.purge_interval_s))
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+                break
+            except asyncio.TimeoutError:
+                try:
+                    store.purge_expired()
+                except Exception:
+                    logger.exception("Clip retention purge failed")
+
     worker = asyncio.create_task(manager.run(pipeline.handle_clip), name="sources")
     web = asyncio.create_task(server.serve(), name="dashboard")
+    purge = asyncio.create_task(_purge_loop(), name="purge")
 
     await stop.wait()
     logger.info("Shutting down…")
     server.should_exit = True
     worker.cancel()
+    purge.cancel()
     await manager.close()
     await mqtt.close()
-    await asyncio.gather(worker, web, return_exceptions=True)
+    await asyncio.gather(worker, web, purge, return_exceptions=True)
 
 
 def main() -> None:

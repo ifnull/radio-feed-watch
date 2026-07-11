@@ -1,0 +1,20 @@
+services:
+  radio-feed-watch:
+    build: .
+    container_name: radio-feed-watch
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      # Override dashboard bind inside the container
+      MQTT_HOST: ${MQTT_HOST:-host.docker.internal}
+    volumes:
+      # Local secrets / locale — never bake these into the image
+      - ./config.yaml:/app/config.yaml:ro
+      - ./config/locales:/app/config/locales:ro
+      - ./data:/app/data
+    # ffmpeg is in the image; host network not required for Broadcastify HTTPS
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
